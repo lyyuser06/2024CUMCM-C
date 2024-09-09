@@ -3,6 +3,7 @@ import numpy as np
 import pandas as pd
 import pyomo.environ as pyo
 from pyomo.opt import SolverFactory
+import gurobipy as gb
 
 # 阈值：落在0的epsilon邻域则认为近似是0
 epsilon = 0.01
@@ -16,6 +17,50 @@ alpha = 0.25
 # 政府收购比例，农民自销比例
 gov_acq_rate = 0.6
 pes_sale_rate = 0.3
+
+sales_expectation = {
+    1: 51300.00,   # 黄豆
+    2: 19665.00,   # 黑豆
+    3: 20160.00,   # 红豆
+    4: 29736.00,   # 绿豆
+    5: 8887.50,    # 爬豆
+    6: 153756.00,  # 小麦
+    7: 119475.00,  # 玉米
+    8: 64260.00,   # 谷子
+    9: 27000.00,   # 高粱
+    10: 11250.00,  # 黍子
+    11: 1350.00,   # 荞麦
+    12: 31590.00,  # 南瓜
+    13: 32400.00,  # 红薯
+    14: 12600.00,  # 莜麦
+    15: 9000.00,   # 大麦
+    16: 18900.00,  # 水稻
+    17: 32616.00,  # 豇豆
+    18: 24192.00,  # 刀豆
+    19: 7560.00,   # 芸豆
+    20: 27000.00,  # 土豆
+    21: 32589.00,  # 西红柿
+    22: 40824.00,  # 茄子
+    23: 810.00,    # 菠菜
+    24: 2349.00,   # 青椒
+    25: 3240.00,   # 菜花
+    26: 3645.00,   # 包菜
+    27: 4050.00,   # 油麦菜
+    28: 31932.00,  # 小青菜
+    29: 11745.00,  # 黄瓜
+    30: 3780.00,   # 生菜
+    31: 1080.00,   # 辣椒
+    32: 3240.00,   # 空心菜
+    33: 1620.00,   # 黄心菜
+    34: 1620.00,   # 芹菜
+    35: 135000.00, # 大白菜
+    36: 54000.00,  # 白萝卜
+    37: 32400.00,  # 红萝卜
+    38: 8100.00,   # 榆黄菇
+    39: 6480.00,   # 香菇
+    40: 16200.00,  # 白灵菇
+    41: 3780.00    # 羊肚菌
+}
 
 field_keys = [  
     "A1", "A2", "A3", "A4", "A5", "A6",  
@@ -40,45 +85,6 @@ df_sale_price['Max'] = pd.to_numeric(df_sale_price['Max'], errors='coerce')
 df_sale_price['Random'] = df_sale_price.apply(lambda row: random.uniform(row['Min'], row['Max']), axis=1)  
 
 # print(df_sale_price)
-
-# print(P)
-
-'''
-    以下注释掉的代码为调试时使用
-'''
-
-'''
-def cropTypeJudge(crop) :
-    crop_row = crop_data[crop_data['作物名称'] == crop]
-    if not crop_row.empty:
-        actual_crop_type = crop_row['作物类型'].values[0]
-        return actual_crop_type
-    else:
-        print(f"作物 '{crop}' 不存在于数据中。")
-        return False
-
-def fieldTypeJudge(field) :
-    field_row = field_data[field_data['地块名称'] == field]
-    if not field_row.empty:
-        actual_field_type = field_row['地块类型'].values[0]
-        return actual_field_type
-    else:
-        print(f"地块 '{field}' 不存在于数据中。")
-        return False
-    
-def fieldArea(field) :
-    field_row = field_data[field_data['地块名称'] == field]
-    if not field_row.empty:
-        actual_field_area = field_row['地块面积/亩'].values[0]
-        return actual_field_area
-    else:
-        print(f"地块 '{field}' 不存在于数据中。")
-        return False
-'''
-
-# print(field_name, crop_name, field_type, crop_type)
-# print(field_area)
-# print(fieldArea('A341'))
 
 # 映射：地块类型 -> 地块下标范围 
 field_map = {
@@ -118,10 +124,11 @@ def gen_data_2023():
 
 data_2023 = gen_data_2023()
 
-# 引入减产惩罚机制，构建罚因子矩阵y[i, j, s]
+# 引入减产惩罚机制，构建 2023 年罚因子矩阵y[i, j, s]
 
 def generate_matrix_y():
     y = np.zeros((54, 41, 2), dtype=int)
+    '''
     for i in range(26):  
         for j in range(15):   
             if data_2023[i, j, 0] > 0 :
@@ -143,11 +150,19 @@ def generate_matrix_y():
         for j in range(16, 34):  
             if data_2023[i, j, 1] > 0:
                 y[i, j, 0] = 1  
+    '''
+    
+    for i in range(54):
+        for j in range(41):
+            for s in range(2):
+                if data_2023[i, j, s] > 0:
+                    y[i, j, s] = 1
     return y
                 
-y = generate_matrix_y()          
-# print(y)
+y_2023 = generate_matrix_y()          
+# print(y_2023)
 
+'''
 def update_matrix_y(t):
     y = np.zeros((54, 41, 2), dtype=int)
     t -= 2024
@@ -173,6 +188,7 @@ def update_matrix_y(t):
             if model.x[i, j, 1, t] > 0:
                 y[i, j, 0] = 1  
     return y
+'''
 
 # 生成2023年产量矩阵，在第一个问题中，亩产量以2023年为基准，此后逐年迭代
 def generate_matrix_Q_2023():
@@ -188,18 +204,11 @@ def generate_matrix_Q_2023():
     return Q
 
 Q = generate_matrix_Q_2023()
-# print(Q)
+# print(Q[26, 18, 0])
 
-def update_Q(Q_prev):
-    Q = np.zeros((54, 41, 2), dtype=float)
-    for i in range(54):
-        for j in range(41):
-            for s in range(2):
-                Q[i, j, s] = Q[i, j, s] * (1 - y[i, j, s] * alpha)
-    return Q
-
-# 生成价格矩阵，在第一问的情境下，我们认为价格趋近平稳，因此价格取定范围内的随机值
+# 生成价格向量，在第一问的情境下，我们认为所有种类作物的价格趋近平稳，因此价格取定范围内的值
 def generate_matrix_P():
+    '''
     P = np.zeros((54, 41, 2), dtype=float)
     
     for index, row in stat_2023.iterrows():
@@ -208,11 +217,16 @@ def generate_matrix_P():
         s = 1 if row['种植季次'] in ['单季', '第一季'] else 2
         s -= 1
         for i in i_range:
-            P[i, j, s] += row['Max']  
+            P[i, j, s] += row['Max'] 
+    '''
+    P = np.zeros((41))
+    for index, row in stat_2023.iterrows():
+        j = int(row['作物编号']) - 1
+        P[j] += row['Max']
     return P
 
 P = generate_matrix_P()
-# print(P)
+# print(P[26, 18, 0])
 
 # 生成成本矩阵，在第一问的情境下，我们认为成本趋近平稳。
 def generate_matrix_D():
@@ -228,284 +242,243 @@ def generate_matrix_D():
     return D
 
 D = generate_matrix_D()
-# print(D)
-'''
-  预期销售量：根据题目要求，我们认为每年的预期销售量相对于2023年保持平稳。
-  在第一问中，根据相关现行政策，并统计2023年情况，我们认为预期销售量是实际产量的90%。
-  其中政府收购60%，农民自销30%，剩余10%农民自种自吃或者计入损耗。
-  因此首先统计2023年产量的90%作为未来预期销售量。
-'''
-
-def generate_matrix_E():
-    return generate_matrix_Q_2023() * (gov_acq_rate + pes_sale_rate)    
+# print(D[26, 18, 0])
 
 # 定义非线性规划模型
 model = pyo.ConcreteModel()
 
-# 起始迭代年份
-t = 2024
-# 输出结果
-res = np.zeros((54, 41, 2, 7))
+model.I = pyo.RangeSet(1, 54) # 54个地块
+model.I_flat = pyo.RangeSet(1, 6) # 平旱地
+model.I_step = pyo.RangeSet(7, 20) # 梯田
+model.I_hill = pyo.RangeSet(21, 26) # 山坡地
+model.I_wet = pyo.RangeSet(27, 34) # 水浇地
+model.I_gh = pyo.RangeSet(35, 50) # 普通大棚
+model.I_igh = pyo.RangeSet(51, 54) # 智慧大棚
 
-# 定义索引集
-model.I1 = pyo.RangeSet(1, 26)  # 平旱地、梯田和山坡地编号
-model.I2 = pyo.RangeSet(27, 34)  # 水浇地编号
-model.I3 = pyo.RangeSet(35, 50)  # 普通大棚编号
-model.I4 = pyo.RangeSet(51, 54)  # 智慧大棚编号
+model.J = pyo.RangeSet(1, 41) # 41 种作物
+model.J_grn_soya = pyo.RangeSet(1, 5) # 粮食(豆类)
+model.J_grn = pyo.RangeSet(6, 16) # 粮食
+model.J_rice = pyo.Set(initialize=[16]) # 水稻
+model.J_veg_soya = pyo.RangeSet(17, 19) # 蔬菜(豆类)
+model.J_veg = pyo.RangeSet(20, 37) # 蔬菜
+model.J_veg_usl = pyo.RangeSet(35, 37) # 大白菜, 白萝卜, 红萝卜
+model.J_mush = pyo.RangeSet(38, 41) # 食用菌
 
-model.J1 = pyo.RangeSet(16, 41)  # 作物编号 16 到 41 水稻和其它非粮食类作物
-model.J2 = pyo.RangeSet(1, 15)   # 作物编号 1 到 15 粮食类作物（除水稻）
-model.J3 = pyo.Set(initialize=[35, 36, 37])   # 大白菜、白萝卜和红萝卜的编号
-model.J4 = pyo.RangeSet(1, 34)   # 作物编号 1 到 34 除水浇地和普通大棚第一季
-model.J5 = pyo.Set(initialize=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 35, 36, 37, 38, 39, 40, 41])
+model.S = pyo.RangeSet(1, 2)    # 季次
+model.T = pyo.RangeSet(2024, 2030) # 年份
 
-model.J_soybeans_corn = pyo.RangeSet(1, 5)  # 粮食（豆类）编号
-model.J_soybeans_vege = pyo.RangeSet(17, 19)    #蔬菜（豆类）编号
-model.S = pyo.RangeSet(1, 2)  # 季节数
+# 设置决策变量x: 年份t季次s在地块i种植作物j的面积 - 连续变量
+model.x = pyo.Var(model.I, model.J, model.S, model.T, domain=pyo.NonNegativeReals)
+# 设置罚因子y: 年份t季次s在是否地块i种植作物j - 0-1变量
+model.y = pyo.Var(model.I, model.J, model.S, model.T, domain=pyo.Binary)
 
-model.I = model.I1 | model.I2 | model.I3 | model.I4
-model.J = model.J2 | model.J1
+A = field_area # A 是每个地块的面积
 
-# 定义变量
-model.x = pyo.Var(model.I, model.J, model.S, domain=pyo.NonNegativeReals)
+M = 100
+
+# 隐性约束: 当x是正值, 那么y是1, 否则
+def xy_relation_rule(model, i, j, s, t):
+    return model.x[i, j, s, t] <= M * model.y[i, j, s, t]
+
+model.xy_relation = pyo.Constraint(model.I, model.J, model.S, model.T, rule=xy_relation_rule)
 
 # 约束 (2) 面积
-def constraint_2(model, i, s):
-    return sum(model.x[i, j, s] for j in model.J) <= field_area[i - 1]
+def area_constraint_rule(model, i, j, s, t):
+    return sum(model.x[i, j, s, t] for j in model.J) <= A[i - 1]
 
-model.Constraint_2 = pyo.Constraint(model.I, model.S, rule=constraint_2)
+model.area_constraint = pyo.Constraint(model.I, model.J, model.S, model.T, rule=area_constraint_rule)
 
-# 约束 (3) 平旱地、梯田和山坡地每年适宜单季种植粮食类作物（水稻除外）
-def constraint_3a(model, i, j, s):
-    if i in model.I1 and j in model.J1:
-        return model.x[i, j, s] == 0
+model.J_grn_except_rice = (model.J_grn_soya | model.J_grn) - model.J_rice
+# print(list(model.J_grain_except_rice))
+
+# 种植耕地限制
+# 除水稻外的粮食种植在平旱地,梯田,山坡地
+def plant_constraint_1_rule(model, i, j, s, t):
+    if i not in model.I_flat | model.I_step | model.I_hill and j in model.J_grn_except_rice:
+        return model.x[i, j, s, t] == 0
     return pyo.Constraint.Skip
 
-def constraint_3b(model, i, j):
-    if i in model.I1 and j in model.J2:
-        return model.x[i, j, 2] == 0
+# 水稻种植在水浇地
+def plant_constraint_2_rule(model, i, j, s, t):
+    if i not in model.I_wet and j in model.J_rice:
+        return model.x[i, j, s, t] == 0
     return pyo.Constraint.Skip
 
-model.Constraint_3a = pyo.Constraint(model.I1, model.J1, model.S, rule=constraint_3a)
-model.Constraint_3b = pyo.Constraint(model.I1, model.J2, rule=constraint_3b)
+# 除大白菜和两种萝卜之外的限制
+model.J_veg_except_usl = (model.J_veg_soya | model.J_veg) - model.J_veg_usl
+# print(list(model.J_veg_except_usl))
 
-# 约束 (4) 水浇地每年可以单季种植水稻或两季种植蔬菜作物
-def constraint_4(model, i):
-    if i in model.I2:
-        return model.x[i, 16, 2] == 0
+def plant_constraint_3_rule(model, i, j, s, t):
+    cc = (not (i in model.I_wet | model.I_gh | model.I_igh and s==1) 
+            and not (i in model.I_igh and s==2))
+    if cc and j in model.J_veg_except_usl:
+        return model.x[i, j, s, t] == 0
     return pyo.Constraint.Skip
 
-model.Constraint_4 = pyo.Constraint(model.I2, rule=constraint_4)
-
-# 约束 (5) 水浇地的种植限制
-def constraint_5a(model, i, j):
-    if i in model.I2 and j in model.J4:
-        return model.x[i, j, 2] == 0
+# 大白菜, 两种萝卜种植在水浇地第二季
+def plant_constraint_4_rule(model, i, j, s, t):
+    if not (i in model.I_wet and s==2) and j in model.J_veg_usl:
+        return model.x[i, j, s, t] == 0
     return pyo.Constraint.Skip
 
-def constraint_5b(model, i, j):
-    if i in model.I2 and j in model.J5:
-        return model.x[i, j, 1] == 0
+# 蘑菇种植在普通大棚第二季
+def plant_constraint_5_rule(model, i, j, s, t):
+    if not (i in model.I_gh and s==2) and j in model.J_mush:
+        return model.x[i, j, s, t] == 0
     return pyo.Constraint.Skip
 
-model.Constraint_5a = pyo.Constraint(model.I2, model.J4, rule=constraint_5a)
-model.Constraint_5b = pyo.Constraint(model.I2, model.J5, rule=constraint_5b)
+model.constraint_plant_1 = pyo.Constraint(model.I, model.J, model.S, model.T, rule=plant_constraint_1_rule)
+model.constraint_plant_2 = pyo.Constraint(model.I, model.J, model.S, model.T, rule=plant_constraint_2_rule)
+model.constraint_plant_3 = pyo.Constraint(model.I, model.J, model.S, model.T, rule=plant_constraint_3_rule)
+model.constraint_plant_4 = pyo.Constraint(model.I, model.J, model.S, model.T, rule=plant_constraint_4_rule)
+model.constraint_plant_5 = pyo.Constraint(model.I, model.J, model.S, model.T, rule=plant_constraint_5_rule)
 
-# 约束 (6) 普通大棚每年种植两季作物，第一季可种植多种蔬菜（大白菜、白萝卜和红萝卜除外），第二季只能种植食用菌。
-def constraint_6a(model, i, j):
-    if i in model.I3 and j in model.J5:
-        return model.x[i, j, 1] == 0
+# 季次约束: 单季种植的作物(所有粮食类作物)一律只考虑第一季情况, 第二季置为0
+# 等价于粮食类作物只能种植在所有地块所有年份的第一季
+def season_constraint_rule(model, i, j, s, t):
+    if j in model.J_grn | model.J_grn_soya:
+        return model.x[i, j, 2, t] == 0
     return pyo.Constraint.Skip
 
-def constraint_6b(model, i, j):
-    if i in model.I3 and j in range(1, 38):
-        return model.x[i, j, 2] == 0
+model.season_constraint = pyo.Constraint(model.I, model.J, model.S, model.T, rule=season_constraint_rule)
+
+# 约束 (3) 如果某块水浇地某年第一季种植了水稻那么这块地当年第二季不能种植其他任何作物
+def constraint_3_rule(model, i, j, s, t):
+    if i in model.I_wet and t in model.T:
+        return model.x[i, j, 2, t] <= M * (1 - model.y[i, 16, 1, t]) 
     return pyo.Constraint.Skip
 
-model.Constraint_6a = pyo.Constraint(model.I3, model.J5, rule=constraint_6a)
-model.Constraint_6b = pyo.Constraint(model.I3, pyo.RangeSet(1, 37), rule=constraint_6b)
+model.constraint_3 = pyo.Constraint(model.I, model.J, model.S, model.T, rule=constraint_3_rule)
 
-# 约束 (7) 智慧大棚每年都可种植两季蔬菜（大白菜、白萝卜和红萝卜除外）
-def constraint_7(model, i, j, s):
-    if i in model.I4 and j in model.J5:
-        return model.x[i, j, s] == 0
-    return pyo.Constraint.Skip
-
-model.Constraint_7 = pyo.Constraint(model.I4, model.J5, model.S, rule=constraint_7)
-
-# 约束 (8) 轮作约束，每个地块在三年内至少要种植一次豆类作物，并且水浇地第二季只能种植特定的三种作物。
-def constraint_8a(model, i, j, s):
-    if i in model.I1 and j in model.J_soybeans_corn and s==1:
+# 约束 (4) 轮作约束，每个地块在三年内至少要种植一次豆类作物，并且水浇地第二季只能种植特定的三种作物。
+def rotate_constraint_rule(model, i, j, s, t):
+    if i in model.I_flat | model.I_step | model.I_hill and t in range(2024, 2030):
         if t==2024:
-            return data_2023[i - 1, j - 1, s - 1] + model.x[i, j, s] >= epsilon
-        elif t==2025:
-            return data_2023[i - 1, j - 1, s - 1] + res[i - 1, j - 1, s - 1, 0] + model.x[i, j, s] >= epsilon
+            return sum(data_2023[i - 1, j - 1, s - 1] for j in model.J_grn_soya for s in model.S) + sum(model.x[i, j, s, t] for j in model.J_grn_soya for s in model.S) + sum(model.x[i, j, s, t + 1] for j in model.J_grn_soya for s in model.S) >= epsilon
         else:
-            return res[i, j, s, t - 2024 - 2] + res[i, j, s, t - 1 - 2024] + model.x[i, j, s] >= epsilon
-    return pyo.Constraint.Skip
-
-model.Constraint_8a = pyo.Constraint(model.I1, model.J1, model.S, rule=constraint_8a)
-
-def constraint_8b(model, i, j, s):
-    if i in model.I2 and j in model.J2 and s == 1:
+            return sum(model.x[i, j, s, t - 1] for j in model.J_grn_soya for s in model.S) + sum(model.x[i, j, s, t] for j in model.J_grn_soya for s in model.S) + sum(model.x[i, j, s, t + 1] for j in model.J_grn_soya for s in model.S) >= epsilon
+    
+    elif i in model.I_wet | model.I_gh | model.I_igh and t in range(2024, 2030):
         if t==2024:
-            return data_2023[i - 1, j - 1, s - 1] + model.x[i, j, s] >= epsilon
-        elif t==2025:
-            return data_2023[i - 1, j - 1, s - 1] + res[i - 1, j - 1, s - 1, 0] + model.x[i, j, s] >= epsilon
+            return sum(data_2023[i - 1, j - 1, s - 1] for j in model.J_veg_soya for s in model.S) + sum(model.x[i, j, s, t] for j in model.J_veg_soya for s in model.S) + sum(model.x[i, j, s, t + 1] for j in model.J_veg_soya for s in model.S) >= epsilon
         else:
-            return res[i, j, s, t - 2024 - 2] + res[i, j, s, t - 1 - 2024] + model.x[i, j, s] >= epsilon
+            return sum(model.x[i, j, s, t - 1] for j in model.J_veg_soya for s in model.S) + sum(model.x[i, j, s, t] for j in model.J_veg_soya for s in model.S) + sum(model.x[i, j, s, t + 1] for j in model.J_veg_soya for s in model.S) >= epsilon
     return pyo.Constraint.Skip
 
-model.Constraint_8b = pyo.Constraint(model.I2, model.J2, model.S, rule=constraint_8b)
+model.rotate_constraint = pyo.Constraint(model.I, model.J, model.S, model.T, rule=rotate_constraint_rule)
 
-def constraint_8c(model, i, j, s):
-    if i in model.I3 and j in model.J2:
-        if t==2024:
-            return data_2023[i - 1, j - 1, s - 1] + model.x[i, j, s] >= epsilon
-        elif t==2025:
-            return data_2023[i - 1, j - 1, s - 1] + res[i - 1, j - 1, s - 1, 0] + model.x[i, j, s] >= epsilon
-        else:
-            return res[i, j, s, t - 2024 - 2] + res[i, j, s, t - 1 - 2024] + model.x[i, j, s] >= epsilon
+# 约束 (5) 种植分散性约束
+# 获取 2023 年所有作物中同种种植相距最远的案例值, 作为之后几年的阈值
+max_dist = 30
+
+def dsp_constraint_rule(model, i_1, i_2, j, s, t):
+    if abs(i_1 - i_2) > max_dist and j in model.J and s in model.S and t in model.T:
+        return model.y[i_1, j, s, t] + model.y[i_2, j, s, t] <= 1
     return pyo.Constraint.Skip
 
-model.Constraint_8c = pyo.Constraint(model.I3, model.J2, model.S, rule=constraint_8c)
-'''
-# 约束 (9) 种植分散性约束
+model.dsp_constraint = pyo.Constraint(model.I, model.I, model.J, model.S, model.T, rule=dsp_constraint_rule)
 
-'''
-def dsp_2023():
-    X_jst = lambda j,s: sum(data_2023[i - 1, j - 1, s] for i in model.I)
-    s1 = [X_jst(j, 0) for j in model.J]
-    s2 = [X_jst(j, 1) for j in model.J]
-    df_xjst = pd.DataFrame({'s1':s1, 's2':s2})
-    df_xjst['Max'] = df_xjst[['s1', 's2']].max(axis=1)
-    df_Xjst = df_xjst['Max']
-    
-    distance = lambda p,q : abs(p - q)
-    
-    # 计算分散度指数 C_jst
-    fd_dict = field_to_dict(field_keys)
-    fd_dict = {value: key for key,value in fd_dict.items()}
-    tp_dict = {1: range(1, 7), 2: range(7, 21), 3: range(21, 27), 4: range(27, 35), 5: range(35, 51), 6: range(51, 55)}
-    x_jst = lambda p,j,s: sum(data_2023[i - 1, j - 1, s - 1] for i in tp_dict[p])
-    dispersion_index = lambda j,s: sum(
-        distance(p, q) * (x_jst(p, j, s) / df_Xjst[j - 1]) * (x_jst(q, j, s) / df_Xjst[j - 1])
-        for p in range(1, 7) for q in range(1, 7)
-    )
-    
-    C_th = pd.DataFrame({'s1':[dispersion_index(j, 1) for j in model.J], 's2':[dispersion_index(j, 2) for j in model.J]})
-    C_th['Max'] = C_th.max().max()
-    C_th = C_th['Max']
-    
-    return C_th
+# 约束: 种植面积限制，每地块的种植面积不能少于阈值 
+# 如果种了某种作物, 面积不能太少
 
-# print(dsp_2023())
-C_threshold = dsp_2023()
+def field_constraint_rule(model, i, j, s, t):
+    return sum(model.x[i, j, s, t] for j in model.J) >= A_min
 
-'''
-def dpx_expr(model, j, s, t):
-    distance = lambda p,q : abs(p - q)
-    
-    # 计算分散度指数 C_jst
-    fd_dict = field_to_dict(field_keys)
-    fd_dict = {value: key for key,value in fd_dict.items()}
-    tp_dict = {1: range(1, 7), 2: range(7, 21), 3: range(21, 27), 4: range(27, 35), 5: range(35, 51), 6: range(51, 55)}
-    x_jst = lambda p, j, s: sum(model.x[i, j, s, t] for i in tp_dict[p])
-    X_jst = lambda j, s, t: sum(model.x[i, j, s, t] for i in model.I)
-    dispersion_index = sum(
-        distance(p, q) * (x_jst(p, j, s) / (X_jst(j, s, t) + epsilon)) * (x_jst(q, j, s) / (X_jst(j, s, t) + epsilon))
-        for p in range(1, 7) for q in range(1, 7)
-    )
-    
-    return dispersion_index
+model.field_constraint = pyo.Constraint(model.I, model.J, model.S, model.T, rule=field_constraint_rule)
 
-model.dpx_jst = pyo.Expression(model.J,model.S,model.T, rule=dpx_expr)
-'''
+def crop_constraint_rule(model, i, j, s, t):
+    return model.x[i, j, s, t] >= A_min * model.y[i, j, s, t]
 
-'''
-def product_p_jst_expr(model, p, j, s, t):
-    tp_dict = {1: range(1, 7), 2: range(7, 21), 3: range(21, 27), 4: range(27, 35), 5: range(35, 51), 6: range(51, 55)}
-    return sum(model.x[i, j, s, t] for i in tp_dict[p])
+model.crop_constraint = pyo.Constraint(model.I, model.J, model.S, model.T, rule=crop_constraint_rule)
 
+# 引入辅助变量 z[j][t], 0-1变量, 用于表示某作物某年可以销售的量是否超过预期销售量
+# 预期销售量来源于2023年数据统计, 在第一问中认为保持不变
 
+expanded_Q = np.expand_dims(Q, axis=-1)
+Q = np.tile(expanded_Q, (1, 1, 1, 7))
 
+expanded_D = np.expand_dims(D, axis=-1)
+D = np.tile(expanded_D, (1, 1, 1, 7))
 
-model.product_p_jst = pyo.Expression(model.P, model.J,model.S,model.T, rule=product_p_jst_expr)
-'''
-'''
-def linear_approx_dpx_expr(model, j, s, t):
-    # 初始化近似的变量和约束
-    epsilon = 1e-6  # 很小的常数，避免除以零
-    tp_dict = {1: range(1, 7), 2: range(7, 21), 3: range(21, 27), 4: range(27, 35), 5: range(35, 51), 6: range(51, 55)}
-    
-    # 新的变量：w[p,q]代表x_jst(p,j,s) * x_jst(q,j,s)
-    # 添加乘积变量约束
-    for p in range(1, 7):
-        for q in range(1, 7):
-            # 新的乘积变量
-            model.w[p, q, j, s, t] = pyo.Var(within=pyo.NonNegativeReals)
+model.z = pyo.Var(model.J, model.T, domain=pyo.Binary)
 
-            # 线性化乘积
-            model.Constraint.add(model.w[p, q, j, s, t] <= x_jst(p, j, s))
-            model.Constraint.add(model.w[p, q, j, s, t] <= x_jst(q, j, s))
-            model.Constraint.add(model.w[p, q, j, s, t] >= x_jst(p, j, s) + x_jst(q, j, s) - 1)
+def sales_rule(model, i, j, s, t):
+    sales = 0
+    if t==2024:
+        sales = sum((gov_acq_rate + pes_sale_rate) * (1 - alpha * y_2023[i - 1, j - 1, s - 1]) * Q[i - 1, j - 1, s - 1, t - 2024] * model.x[i, j, s, t] for i in model.I for s in model.S)
+    else:
+        sales = sum((gov_acq_rate + pes_sale_rate) * (1 - alpha * model.y[i, j, s, t]) * Q[i - 1, j - 1, s - 1, t - 2024] * model.x[i, j, s, t] for i in model.I for s in model.S)
+    return sales
 
-    # 重新计算线性化的 dispersion_index
-    dispersion_index = sum(
-        distance(p, q) * (model.w[p, q, j, s, t] / (X_jst(j, s, t) + epsilon))
-        for p in range(1, 7) for q in range(1, 7)
-    )
+def cost_rule(model, i, j, s, t):
+    return sum(D[i - 1, j - 1, s - 1, t - 2024] * model.x[i, j, s, t] for i in model.I for s in model.S)
 
-    return dispersion_index
+model.sales = pyo.Expression(model.I, model.J, model.S, model.T, rule=sales_rule)
+model.cost = pyo.Expression(model.I, model.J, model.S, model.T, rule=cost_rule)
 
-model.dpx_jst = pyo.Expression(model.J, model.S, model.T, rule=linear_approx_dpx_expr)
+def constraint_z_rule_1(model, i, j, s, t):
+    if j in model.J and t in model.T:
+        return model.sales[i, j, s, t] - sales_expectation[j] >= -M * (1 - model.z[j, t])
+    return pyo.Constraint.Skip
 
-def constraint_9(model,i, j, s, t):
-    if i in model.I1 and j in model.J and s==2:
-        return model.dpx_jst[j, 1, t] <= C_threshold[j - 1]
-    return model.dpx_jst[j, s, t] <= C_threshold[j - 1]
+def constraint_z_rule_2(model, i, j, s, t):
+    if j in model.J and t in model.T:
+        return model.sales[i, j, s, t] - sales_expectation[j] <= M * model.z[j, t]
+    return pyo.Constraint.Skip
 
-model.Constraint_9 = pyo.Constraint(model.I, model.J, model.S, model.T, rule=constraint_9)
-'''
+model.constraint_z_1 = pyo.Constraint(model.I, model.J, model.S, model.T, rule=constraint_z_rule_1)
+model.constraint_z_2 = pyo.Constraint(model.I, model.J, model.S, model.T, rule=constraint_z_rule_2)
 
-# 约束 (10) 种植面积限制，每地块的种植面积不能少于阈值
-
-def constraint_10(model, i, j, s):
-    return sum(model.x[i, j, s] for j in model.J) >= A_min
-
-model.Constraint_10 = pyo.Constraint(model.I, model.J, model.S, rule=constraint_10)
 
 # 目标函数：总利润 = 总收入 - 总成本
 # 这里涉及两种方案，分别对应第一问的两种要求
 
 # 第一种情况：超过2023年的部分滞销。
 
+# 多余农作物降价的比例
+
+rate = 0
+
 def objective_rule(model):
-    return sum( (gov_acq_rate + pes_sale_rate) * Q[i - 1, j - 1, s - 1] * 
-               model.x[i, j, s] * P[i - 1, j - 1, s - 1] - 
-               D[i - 1, j - 1, s - 1] * model.x[i, j, s]
-               for i in model.I for j in model.J for s in model.S)
+    return sum((1 - model.z[j, t]) * (P[j - 1] * model.sales[i, j, s, t])
+    + model.z[j, t] * (P[j - 1] * (sales_expectation[j] + rate * (model.sales[i, j, s, t] - sales_expectation[j])))
+    - model.cost[i, j, s, t] for i in model.I for j in model.J for s in model.S for t in model.T)
 
 model.objective = pyo.Objective(rule=objective_rule, sense=pyo.maximize)
 
-# 创建一个求解器
-solver = SolverFactory('gurobi', solver_io='python')
-# solver.options['NonConvex'] = 2
 
-# 运行优化器并输出结果
-result_data = {}  # 存储每年优化结果的字典
+solver = SolverFactory('gurobi', solver_io='python')  
 
-while t <= 2030:
-    Q = update_Q(Q)
-    result = solver.solve(model, tee=True)
-    print(f"Year {t}: Solver Status: {result.solver.status}, Termination Condition: {result.solver.termination_condition}")
-    
-    # 保存每个地块、每种作物和季节的种植面积结果
-    for i in range(0, 54):
-        for j in range(0, 41):
-            for s in [0, 1]:
-                res[i, j, s] = model.x[i + 1, j + 1, s + 1]
-    y = update_matrix_y(t)
-    t += 1
-    
-print(res)
+# 传递Gurobi参数
+solver.options['NonConvex'] = 2  # 处理非凸非线性问题
+solver.options['OutputFlag'] = 0  # 关闭日志输出
+solver.options['LogToConsole'] = 0  # 关闭控制台日志输出
+
+results = solver.solve(model, tee=False)
+
+# 输出求解状态信息
+# print(f"Solver Status: {results.solver.status}")
+# print(f"Termination Condition: {results.solver.termination_condition}")
+
+# 创建一个空的 DataFrame，用于存储结果
+df_result = pd.DataFrame(columns=['i', 'j', 's', 't', 'x[i,j,s,t]'])
+
+if (results.solver.status == 'ok') and (results.solver.termination_condition == 'optimal'):
+    print(f"Optimal solution found: x = {model.x.value}, y = {model.y.value}, Objective = {model.obj()}")
+
+    # 将结果添加到 DataFrame 中
+    for i in model.I:
+        for j in model.J:
+            for s in model.S:
+                for t in model.T:
+                    df_result = df_result.append({'i': i, 'j': j, 's': s, 't': t, 'x[i,j,s,t]': model.x[i, j, s, t].value}, ignore_index=True)
+else:
+    print("No optimal solution found.")
+
+# 将 DataFrame 输出到 Excel 文件
+df_result.to_excel("solution_results.xlsx", index=False)
+print("Results have been exported to solution_results.xlsx.")
+
+# print(results)
+
+print("Optimal objective value:", pyo.value(model.obj))
